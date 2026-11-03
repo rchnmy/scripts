@@ -1,0 +1,136 @@
+---
+# Ansible playbook for dropping outdated Clickhouse system partitions
+
+- hosts: all
+  become: true
+
+  tasks:
+    - name: Ensure clickhouse-driver is installed
+      ansible.builtin.apt:
+        update_cache: true
+        name: python3-clickhouse-driver
+        force: true
+      when: ansible_distribution == "Ubuntu"
+
+    - name: Set Clickhouse IP address fact
+      ansible.builtin.set_fact:
+        clickhouse_local_addr: "{{ ansible_default_ipv4.address | default(ansible_all_ipv4_addresses[0]) }}"
+
+    - name: Create heaviest table view
+      community.clickhouse.clickhouse_client:
+        execute: "CREATE OR REPLACE VIEW view_heaviest_table AS SELECT database, `table`, formatReadableSize(sum(bytes_on_disk)) AS on_disk_size FROM system.parts WHERE active GROUP BY database, `table` ORDER BY sum(bytes_on_disk) DESC LIMIT 1"
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      when:
+        - clickhouse_default_user is defined and clickhouse_default_user | length > 0
+        - clickhouse_default_password is defined and clickhouse_default_password | length > 0
+
+    - name: Register heaviest table view
+      community.clickhouse.clickhouse_client:
+        execute: "SELECT * FROM view_heaviest_table"
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      register: result_view_heaviest_table
+      changed_when: false
+
+    - name: Print heaviest table view result
+      ansible.builtin.debug:
+        var: result_view_heaviest_table.result
+
+    - name: Register database name
+      community.clickhouse.clickhouse_client:
+        execute: "SELECT database FROM view_heaviest_table"
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      register: param_database_raw
+      changed_when: false
+
+    - name: Register table name
+      community.clickhouse.clickhouse_client:
+        execute: "SELECT `table` FROM view_heaviest_table"
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      register: param_table_raw
+      changed_when: false
+
+    - name: Set database and table name facts
+      ansible.builtin.set_fact:
+        param_database: >-
+          {{ param_database_raw.result | regex_replace("['\[\]]", "") }}
+        param_table: >-
+          {{ param_table_raw.result | regex_replace("['\[\]]", "") }}
+
+    - name: Create partitions to be dropped view
+      community.clickhouse.clickhouse_client:
+        execute: "CREATE OR REPLACE VIEW view_partitions_to_be_dropped AS SELECT DISTINCT partition FROM system.parts WHERE (database = '{{ param_database }}') AND (`table` = '{{ param_table }}') AND (max_date < (today() - toIntervalDay({{ clickhouse_table_ttl }}))) ORDER BY partition DESC"
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      when: clickhouse_table_ttl is defined and clickhouse_table_ttl | length > 0
+
+    - name: Register partitions to be dropped
+      community.clickhouse.clickhouse_client:
+        execute: "SELECT * FROM view_partitions_to_be_dropped"
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      register: partitions_to_be_dropped_raw
+      changed_when: false
+
+    - name: Set partition list fact
+      ansible.builtin.set_fact:
+        param_partitions: '{{ partitions_to_be_dropped_raw.result | regex_replace("[\[\],]", "") | split }}'
+
+    - name: Print the list of partitions to be dropped
+      ansible.builtin.debug:
+        var: param_partitions
+
+    - name: Drop outdated partitions
+      community.clickhouse.clickhouse_client:
+        execute: 'ALTER TABLE {{ param_database }}.{{ param_table }} DROP PARTITION {{ item }}'
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      loop: "{{ param_partitions }}"
+      when: param_partitions | length > 0
+
+    - name: Update the heaviest table view
+      community.clickhouse.clickhouse_client:
+        execute: "SELECT * FROM view_heaviest_table"
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      register: updated_result_view_heaviest_table
+      changed_when: false
+
+    - name: Print the updated heaviest table view
+      ansible.builtin.debug:
+        var: updated_result_view_heaviest_table.result
