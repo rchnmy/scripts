@@ -1,0 +1,4 @@
+---
+journald_config_disable: false
+journald_retention_period: "1month" # The default unit is seconds, which you don't have to specify. Other examples are "30m", "12h", "3day", "2week", "1month"
+journald_clean_force: true
