@@ -1,0 +1,22 @@
+---
+  - name: systemd_daemon_reload
+    ansible.builtin.systemd_service:
+      daemon_reload: true
+
+  - name: restart_sddm
+    ansible.builtin.systemd_service:
+      name: sddm
+      state: restarted
+
+  - name: restart_wayvnc
+    ansible.builtin.systemd_service:
+      name: wayvnc
+      state: restarted
+
+  - name: restart_watcher
+    ansible.builtin.systemd_service:
+      name: watcher
+      state: restarted
+
+  - name: reboot_system
+    ansible.builtin.reboot:
