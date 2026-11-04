@@ -1,0 +1,23 @@
+---
+# Ansible role for configuring Journald retention period
+
+- name: Copy journald config
+  ansible.builtin.template:
+    src: "journald.conf.j2"
+    dest: "/etc/systemd/journald.conf"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Restart systemd-journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+
+- name: Force deleting old journal entries
+  become: true
+  become_method: sudo
+  ansible.builtin.shell: |
+    journalctl --rotate --vacuum-time={{ journald_retention_period }} &> /dev/null
+  when: journald_clean_force | bool
+  changed_when: false
