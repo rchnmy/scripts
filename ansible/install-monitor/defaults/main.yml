@@ -1,0 +1,31 @@
+---
+monitor_users:
+  - { name: 'video', group: 'users', groups: [ 'video', 'tty', 'voice', 'audio', 'render' ], pass: "{{ video_user_pass }}", shell: '/bin/bash' }
+  - { name: 'vnc', group: 'users', groups: ['video', 'voice', 'audio'], pass: "{{ vnc_user_pass }}", shell: '/usr/sbin/nologin' }
+
+monitor_templates:
+  - { name: 'sway_conf', dir: '/home/video/.config/sway', src: 'sway.conf.j2', dest: 'config', owner: 'video',  group: 'video', mode: '0640'}
+  - { name: 'wayvnc_conf', dir: '/home/vnc/.config/wayvnc', src: 'wayvnc.conf.j2', dest: 'config', owner: 'vnc', group: 'users', mode: '0644' }
+  - { name: 'wayvnc_unit', dir: '/etc/systemd/system', src: 'wayvnc.service.j2', dest: 'wayvnc.service', owner: 'root', group: 'root', mode: '0644' }
+  - { name: 'watcher_unit', dir: '/etc/systemd/system', src: 'watcher.service.j2', dest: 'watcher.service', owner: 'root', group: 'root', mode: '0644' }
+  - { name: 'watcher_path', dir: '/etc/systemd/system', src: 'watcher.path.j2', dest: 'watcher.path', owner: 'root', group: 'root', mode: '0644' }
+
+monitor_vnc_dir: '/home/vnc/.config/wayvnc'
+screen_wayland_display: 'wayland-1'
+screen_vnc_port: 5900
+
+install_pkgs: [ 'sway', 'sddm', 'seatd', 'foot', 'wofi', 'swaybg', 'swaylock', 'grim', 'slurp', 'wl-clipboard', 'adwaita-icon-theme-full', 'waybar', 'remote-logon*', 'wayvnc' ]
+remove_pkgs: [ 'xserver-xorg*', 'xorg*', 'gdm3' ]
+
+monitor_env_vars:
+  WLR_BACKENDS: "headless"
+  WLR_LIBINPUT_NO_DEVICES: "1"
+
+disable_systemd: [ 'sleep.target', 'suspend.target', 'hibernate.target', 'hybrid-sleep.target', 'vnc.service', 'x11vnc.service' ]
+enable_systemd: [ 'wayvnc.service', 'watcher.service', 'watcher.path' ]
+
+monitor_cron_jobs:
+  - { name: 'Set XDG_RUNTIME_DIR ownership', job: "chown -R vnc: {{ runtime_user_video }} 2> /dev/null || true" }
+  - { name: 'Set XDG_RUNTIME_DIR permissions', job: "chmod g+rwx {{ runtime_user_video }} || true" }
+  - { name: 'Set Wayland socket permissions', job: "sh -lc 'chmod g+rw {{ runtime_user_video }}/wayland-* 2> /dev/null || true'" }
+  - { name: 'Start Wayvnc with a delay', job: "sleep 30s && systemctl restart wayvnc" }
