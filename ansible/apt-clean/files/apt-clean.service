@@ -1,0 +1,6 @@
+[Unit]
+Description=apt cache clean
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/apt clean
