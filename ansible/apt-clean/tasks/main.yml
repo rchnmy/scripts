@@ -1,0 +1,28 @@
+---
+# Ansible role for cleaning APT cache
+
+- name: Copy systemd unit and timer
+  become: true
+  ansible.builtin.copy:
+    src: "files/{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    validate: systemd-analyze verify %s
+    mode: '0644'
+    owner: root
+    group: root
+  loop:
+    - { src: "apt-clean.service", dest: "apt-clean.service" }
+    - { src: "apt-clean.timer", dest: "apt-clean.timer" }
+
+- name: Enable and start systemd timer
+  become: true
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    name: apt-clean.timer
+    enabled: true
+    state: started
+
+- name: Force apt clean
+  become: true
+  ansible.builtin.shell: apt clean
+  when: apt_clean_force | bool
