@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch Wayland socket creation
+
+[Path]
+PathChanged={{ runtime_user_video }}
+Unit=watcher.service
+
+[Install]
+WantedBy=multi-user.target
