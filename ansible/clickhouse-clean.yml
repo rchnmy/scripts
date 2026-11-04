@@ -6,6 +6,7 @@
 
   tasks:
     - name: Ensure clickhouse-driver is installed
+      tags: clickhouse_ttl
       ansible.builtin.apt:
         update_cache: true
         name: python3-clickhouse-driver
@@ -13,10 +14,12 @@
       when: ansible_distribution == "Ubuntu"
 
     - name: Set Clickhouse IP address fact
+      tags: clickhouse_ttl
       ansible.builtin.set_fact:
         clickhouse_local_addr: "{{ ansible_default_ipv4.address | default(ansible_all_ipv4_addresses[0]) }}"
 
     - name: Create heaviest table view
+      tags: clickhouse_ttl
       community.clickhouse.clickhouse_client:
         execute: "CREATE OR REPLACE VIEW view_heaviest_table AS SELECT database, `table`, formatReadableSize(sum(bytes_on_disk)) AS on_disk_size FROM system.parts WHERE active GROUP BY database, `table` ORDER BY sum(bytes_on_disk) DESC LIMIT 1"
         login_host: "{{ clickhouse_local_addr }}"
@@ -30,6 +33,7 @@
         - clickhouse_default_password is defined and clickhouse_default_password | length > 0
 
     - name: Register heaviest table view
+      tags: clickhouse_ttl
       community.clickhouse.clickhouse_client:
         execute: "SELECT * FROM view_heaviest_table"
         login_host: "{{ clickhouse_local_addr }}"
@@ -46,6 +50,7 @@
         var: result_view_heaviest_table.result
 
     - name: Register database name
+      tags: clickhouse_ttl
       community.clickhouse.clickhouse_client:
         execute: "SELECT database FROM view_heaviest_table"
         login_host: "{{ clickhouse_local_addr }}"
@@ -58,6 +63,7 @@
       changed_when: false
 
     - name: Register table name
+      tags: clickhouse_ttl
       community.clickhouse.clickhouse_client:
         execute: "SELECT `table` FROM view_heaviest_table"
         login_host: "{{ clickhouse_local_addr }}"
@@ -70,6 +76,7 @@
       changed_when: false
 
     - name: Set database and table name facts
+      tags: clickhouse_ttl
       ansible.builtin.set_fact:
         param_database: >-
           {{ param_database_raw.result | regex_replace("['\[\]]", "") }}
@@ -134,3 +141,15 @@
     - name: Print the updated heaviest table view
       ansible.builtin.debug:
         var: updated_result_view_heaviest_table.result
+
+    - name: Set table TTL
+      tags: clickhouse_ttl
+      community.clickhouse.clickhouse_client:
+        execute: 'ALTER TABLE {{ param_database }}.{{ param_table }} (MODIFY TTL event_date + toIntervalDay({{ clickhouse_table_ttl }}))'
+        login_host: "{{ clickhouse_local_addr }}"
+        login_port: 9440
+        login_user: "{{ clickhouse_default_user }}"
+        login_password: "{{ clickhouse_default_password }}"
+        client_kwargs:
+          secure: true
+      when: clickhouse_table_ttl is defined and clickhouse_table_ttl | length > 0
