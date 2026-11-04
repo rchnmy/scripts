@@ -1,0 +1,3 @@
+---
+apt_clean_disable: false
+apt_clean_force: true
