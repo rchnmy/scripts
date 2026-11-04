@@ -1,0 +1,18 @@
+[Unit]
+Description=Wayvnc server for remote control
+After=graphical.target
+
+[Service]
+Type=exec
+User=vnc
+Group=users
+Environment="XDG_RUNTIME_DIR={{ runtime_user_video }}"
+Environment="WAYLAND_DISPLAY={{ screen_wayland_display }}"
+Environment="HOME=/home/vnc"
+SyslogIdentifier=wayvnc
+ExecStart=wayvnc 0.0.0.0 {{ screen_vnc_port }} --config {{ monitor_vnc_dir }}/config
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=graphical.target
