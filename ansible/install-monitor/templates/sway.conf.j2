@@ -1,0 +1,24 @@
+set $mod Mod1
+set $mod2 Mod4
+seat seat0 xcursor_theme Adwaita 24
+bindsym $mod2+Return exec foot
+bindsym $mod+Return exec foot
+bindsym $mod+d exec wofi --show drun
+bindsym $mod+Shift+e exec "swaymsg exit"
+bindsym $mod+Shift+c reload
+exec wl-paste -t text --watch clipman store --no-persist
+output * mode 1920x1080
+input * {
+    xkb_layout "us,ru"
+    xkb_options "grp:ctrl_shift_toggle"
+}
+default_border none
+default_floating_border none
+hide_edge_borders both
+exec_always google-chrome --ozone-platform=wayland
+{%- if screen_urls is defined and screen_urls | length > 0 -%}
+  {%- for screen_url in screen_urls %} "{{ screen_url }}"
+    {%- if not loop.last %} \
+    {% endif -%}
+  {% endfor %}
+{% endif %}
