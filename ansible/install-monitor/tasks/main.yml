@@ -1,0 +1,213 @@
+---
+  - name: Add users
+    tags: users
+    ansible.builtin.user:
+      name: "{{ item.name }}"
+      group: "{{ item.group }}"
+      groups: "{{ item.groups }}"
+      password: "{{ item.pass }}"
+      shell: "{{ item.shell }}"
+      append: true
+    loop: "{{ monitor_users }}"
+    ignore_errors: true
+    no_log: true
+
+  - name: Set video UID
+    tags: users
+    ansible.builtin.shell: id -u video
+    register: video_user_uid
+    changed_when: false
+
+  - name: Set XDG_RUNTIME_DIR fact
+    tags: users
+    ansible.builtin.set_fact:
+      runtime_user_video: "/run/user/{{ video_user_uid.stdout }}"
+
+  - name: Install SDDM, Wayvnc, Sway
+    tags: install
+    ansible.builtin.apt:
+      name: "{{ install_pkgs }}"
+      state: latest
+      update_cache: true
+      autoremove: true
+      autoclean: true
+
+  - name: Ensure directories exist
+    tags: configure
+    ansible.builtin.file:
+      path: "{{ item.dir }}"
+      state: directory
+      owner: "{{ item.owner }}"
+      group: "{{ item.group }}"
+      mode: '0750'
+    loop: "{{ monitor_templates }}"
+    no_log: true
+
+  - name: Copy SDDM config
+    tags: configure
+    ansible.builtin.copy:
+      src: "files/sddm.conf"
+      dest: "/etc/sddm.conf.d/sddm.conf"
+      owner: root
+      group: root
+      mode: '0640'
+    no_log: true
+
+  - name: Copy Sway and Wayvnc configs and systemd files
+    tags: configure
+    ansible.builtin.template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dir }}/{{ item.dest }}"
+      owner: "{{ item.owner }}"
+      group: "{{ item.group }}"
+      mode: "{{ item.mode }}"
+    loop: "{{ monitor_templates }}"
+    notify: systemd_daemon_reload
+    no_log: true
+
+  - name: Add environment variables to /etc/profile
+    tags: configure
+    ansible.builtin.lineinfile:
+      path: '/etc/profile'
+      regexp: "^export {{ item.key }}="
+      line: "export {{ item.key }}={{ item.value }}"
+    loop: "{{ monitor_env_vars | dict2items }}"
+
+  - name: Remove default SDDM config
+    tags: configure
+    ansible.builtin.file:
+      path: "/etc/sddm.conf"
+      state: absent
+      force: true
+    changed_when: false
+    ignore_errors: true
+
+  - name: Replace GDM3 with SDDM
+    tags: configure
+    ansible.builtin.shell: echo $(which sddm) > /etc/X11/default-display-manager
+
+  - name: Set SDDM as default display manager
+    tags: configure
+    ansible.builtin.shell: dpkg-reconfigure -f noninteractive sddm
+
+  - name: Start SDDM service
+    tags: configure
+    ansible.builtin.systemd_service:
+      name: "sddm.service"
+      state: started
+      enabled: true
+    notify: reboot_system
+
+  - name: "Ensure {{ runtime_user_video }} ownership"
+    tags: users
+    ansible.builtin.shell: chown -R vnc:users "{{ runtime_user_video }}" 2> /dev/null
+    changed_when: false
+    ignore_errors: true
+
+  - name: Generate Wayvnc X509 keys and TLS certificate
+    tags: [ x509, configure ]
+    block:
+      - name: Generate RSA-AES key
+        community.crypto.openssl_privatekey:
+          path: "{{ monitor_vnc_dir }}/rsa_key.pem"
+          type: "RSA"
+          size: 4096
+          owner: vnc
+          group: users
+          mode: '0600'
+
+      - name: Generate ECC private key
+        community.crypto.openssl_privatekey:
+          path: "{{ monitor_vnc_dir }}/tls_key.pem"
+          type: "ECC"
+          size: 384
+          curve: "secp384r1"
+          owner: vnc
+          group: users
+          mode: '0600'
+
+      - name: Create CSR
+        community.crypto.openssl_csr_pipe:
+          privatekey_path: "{{ monitor_vnc_dir }}/tls_key.pem"
+          common_name: "{{ inventory_hostname }}"
+          subject_alt_name: "DNS:{{ inventory_hostname }},IP:{{ ansible_default_ipv4.address | default(ansible_all_ipv4_addresses[0]) }}"
+        register: csr
+
+      - name: Generate TLS certificate
+        community.crypto.x509_certificate:
+          path: "{{ monitor_vnc_dir }}/tls_cert.pem"
+          privatekey_path: "{{ monitor_vnc_dir }}/tls_key.pem"
+          csr_content: "{{ csr.csr }}"
+          provider: "selfsigned"
+          selfsigned_digest: "sha384"
+          selfsigned_not_after: "+3650d"
+          owner: vnc
+          group: users
+          mode: '0644'
+        notify: restart_wayvnc
+
+  - name: Disable redundant systemd entities
+    tags: configure
+    ansible.builtin.systemd_service:
+      name: "{{ item }}"
+      state: stopped
+      enabled: false
+      masked: true
+    loop: "{{ disable_systemd }}"
+    ignore_errors: true
+
+  - name: Enable Wayvnc service and its Watcher
+    tags: configure
+    ansible.builtin.systemd_service:
+      name: "{{ item }}"
+      state: started
+      enabled: true
+    loop: "{{ enable_systemd }}"
+
+  - name: Configure crontab
+    tags: configure
+    ansible.builtin.cron:
+        name: "{{ item.name }}"
+        user: root
+        special_time: reboot
+        job: "{{ item.job }}"
+    loop: "{{ monitor_cron_jobs }}"
+
+  - name: Remove X11, GDM3
+    tags: remove_x
+    ansible.builtin.apt:
+      name: "{{ remove_pkgs }}"
+      state: absent
+      purge: true
+      autoremove: true
+
+  - name: Add browser
+    tags: [ google-chrome, install ]
+    block:
+      - name: Download Google Linux signing key
+        ansible.builtin.get_url:
+          url: https://dl.google.com/linux/linux_signing_key.pub
+          dest: /etc/apt/keyrings/google-linux-signing-key.pub
+          owner: root
+          group: root
+          mode: '0644'
+
+      - name: Dearmor key to GPG
+        ansible.builtin.command: >
+          gpg --dearmor --yes
+          --output /etc/apt/keyrings/google-chrome.gpg
+          /etc/apt/keyrings/google-linux-signing-key.pub
+        changed_when: true
+
+      - name: Add Google Chrome repo
+        ansible.builtin.apt_repository:
+          repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main"
+          filename: google-chrome
+          state: present
+          update_cache: true
+
+      - name: Installing Chrome
+        ansible.builtin.apt:
+          name: google-chrome-stable
+          state: latest
+        notify: reboot_system
