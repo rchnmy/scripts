@@ -1,0 +1,7 @@
+[Unit]
+Description=Fix Wayland socket permissions
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c "chmod -R g+rwx {{ runtime_user_video }} 2> /dev/null || true"
+RestartSec=5
