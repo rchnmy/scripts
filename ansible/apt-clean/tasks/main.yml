@@ -1,5 +1,5 @@
 ---
-# Ansible role for cleaning APT cache
+# Ansible role for cleaning APT cache on a regular basis
 
 - name: Copy systemd unit and timer
   become: true
